@@ -1,0 +1,130 @@
+#! /usr/local/bin/python
+
+FILENAME = "/usr/local/nagios/var/nagios.log"
+DBHOST = "qrnsjump001.qnow.com"
+DBSCHEMA = "unixcorn"
+DBUSER = "unixcorn"
+DBPASSWORD = "fakeuser"
+DELAY = 30                      # number of seconds to wait before re-opening the file
+SCHEMA = {
+    "nagios_hosts" : "create table nagios_hosts (hostname varchar(60), status varchar(60), since timestamp)",
+    "nagios_services" : "create table nagios_services (hostname varchar(60),service varchar(200), status varchar(60), since timestamp)",
+    }
+
+import os, sys
+from time import sleep
+import MySQLdb as database
+
+class db:
+    def __init__(self, schema, reconnect_attempts = 5, reconnect_delay = 5):
+        self.reconnect_attempts = reconnect_attempts
+        self.reconnect_delay = reconnect_delay
+        self.connect()
+        self.check_schema(schema)
+
+    def connect(self):
+        self.conn = database.connect(host=DBHOST,
+                                     user=DBUSER,
+                                     passwd=DBPASSWORD,
+                                     db=DBSCHEMA)
+        self.conn.autocommit(True)
+        self.cursor = self.conn.cursor()
+
+    def reconnect(self):
+        count = 0
+        while count < self.reconnect_attempts:
+            print "reconnecting attempt %d" % (count+1)
+            try:
+                self.connect()
+                self.test()
+                break
+            except Exception, e:
+                self.conn = None
+                self.cursor = None
+                count += 1
+                sleep(self.reconnect_delay)
+        return
+        
+    def check_schema(self, schema):
+        '''Ensure the schema is there.
+
+        The schema variable had better be a dict of tablename->CREATE.'''
+        for table in schema:
+            try:
+                self("select 1 from %s" % table)
+            except Exception, e:
+                print e
+                self(schema[table])
+        return
+
+    def test(self):
+        self.cursor.execute('SELECT 1')
+        return True
+
+    def __call__(self, sql, *args):
+        try:
+            self.test()
+        except Exception, e:
+            print e
+            self.reconnect()
+        self.cursor.execute(sql, *args)
+        return self.cursor.fetchall()
+
+    def host(self, line):
+        bits = line.split(';')
+        name = bits[0].split(':')[1].strip()
+        status = bits[1]
+        retval = self('select * from nagios_hosts where hostname = %s', name)
+        if len(retval) == 0:
+            self("insert into nagios_hosts (hostname, status) values (%s, %s)", (name, status))
+        else:
+            self("update nagios_hosts set status = %s where hostname = %s", (status, name))
+        return
+    
+    def service(self, line):
+        bits = line.split(';')
+        name = bits[0].split(':')[1].strip()
+        svc = bits[1]
+        status = bits[2]
+        retval = self('select * from nagios_services where hostname = %s and service = %s', (name, svc))
+        if len(retval) == 0:
+            self("insert into nagios_services (hostname, service, status) values (%s, %s, %s)", (name, svc, status))
+        else:
+            self("update nagios_services set status = %s where hostname = %s and service = %s", (status, name, svc))
+        return
+    
+class smartfile:
+    def __init__(self, filename, reopen_delay):
+        self.filename = filename
+        self.reopen_delay = reopen_delay
+        self.fh = open(FILENAME)
+        self.where = self.fh.tell()
+        self.iteration = 0
+        return
+
+    def reopen(self):
+        self.iteration = 0
+        self.where = self.fh.tell()
+        self.fh = open(FILENAME)
+        self.fh.seek(self.where)
+        return
+
+    def readline(self):
+        self.iteration += 1
+        if self.iteration > self.reopen_delay: self.reopen()
+        return self.fh.readline()
+
+conn = db(SCHEMA)
+
+fh = smartfile(FILENAME, DELAY)
+
+if __name__ == '__main__':
+    while 1:
+        line = fh.readline()
+        if line:
+            if "CURRENT SERVICE STATE:" in line: conn.service(line)
+            if "SERVICE ALERT:" in line: conn.service(line)
+            if "CURRENT HOST STATE:" in line: conn.host(line)
+            if "HOST HOST STATE:" in line: conn.host(line)
+        else:
+            sleep(1)
