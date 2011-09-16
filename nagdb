@@ -1,10 +1,10 @@
 #! /usr/local/bin/python
 
 FILENAME = "/usr/local/nagios/var/nagios.log"
-DBHOST = "qrnsjump001.qnow.com"
+DBHOST = "foo.bar.com"
 DBSCHEMA = "unixcorn"
 DBUSER = "unixcorn"
-DBPASSWORD = "fakeuser"
+DBPASSWORD = "fakepasword"
 DELAY = 30                      # number of seconds to wait before re-opening the file
 SCHEMA = {
     "nagios_hosts" : "create table nagios_hosts (hostname varchar(60), status varchar(60), since timestamp)",
