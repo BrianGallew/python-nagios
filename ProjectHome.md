@@ -1,0 +1,1 @@
+Tools for saving the Nagios state into a database in near real-time, and managing the server state via a simple to use library.
